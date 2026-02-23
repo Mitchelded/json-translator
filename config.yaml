@@ -1,0 +1,35 @@
+project:
+  mods_path: r"C:\Users\Mitchelde\Desktop\json-translator\Xtardew Valley-4399-3-2-0-1735946829"
+  backup_folder: "backups"
+
+ollama:
+  host: "http://localhost:11434/"
+  model: "qwen3-vl:8b"
+  timeout: 180
+
+translation:
+  target_language: "Russian"
+  batch_size: 50
+
+filter:
+  min_length: 3
+  min_letters: 2
+  skip_if_no_letters: true
+  skip_numeric_only: true
+
+system:
+  skip_if_already_target_language: true
+  show_progress: true
+
+prompts:
+  translate_prompt: |
+    You are a professional Stardew Valley mod localizer.
+
+    Translate the provided list of strings to {target_language}.
+
+    Rules:
+    - Preserve placeholders like {{playerName}}, %item, {0}, etc.
+    - Preserve symbols like ^ / | #
+    - Do NOT explain anything.
+    - Return ONLY a valid JSON array.
+    - Keep order identical.

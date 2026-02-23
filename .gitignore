@@ -1,0 +1,30 @@
+Mods/
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build
+dist/
+build/
+*.log
+
+# Testing
+coverage/
+.nyc_output/
+
+# OS
+Thumbs.db
