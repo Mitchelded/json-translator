@@ -3,48 +3,22 @@ import json
 import json5
 import re
 import shutil
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from deep_translator import GoogleTranslator
+import requests
 from tqdm import tqdm
+import hashlib
 
+def get_file_hash(filepath):
+    hasher = hashlib.md5()
+    with open(filepath, "rb") as f:
+        hasher.update(f.read())
+    return hasher.hexdigest()
 # ===============================
 # НАСТРОЙКИ
 # ===============================
 
 MODS_FOLDER = r"C:\Users\Mitchelde\Desktop\json-translator\Xtardew Valley-4399-3-2-0-1735946829"
-TARGET_LANG = "ru"
-THREADS = 4
-CREATE_BACKUP = True
-CACHE_FILE = "translation_cache.json"
-LOG_FILE = "translation_errors.log"
-
-translator = GoogleTranslator(source="auto", target=TARGET_LANG)
-lock = threading.Lock()
-
-# ===============================
-# КЭШ
-# ===============================
-
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, "r", encoding="utf-8") as f:
-        CACHE = json.load(f)
-else:
-    CACHE = {}
-
-def save_cache():
-    with lock:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(CACHE, f, ensure_ascii=False, indent=2)
-
-# ===============================
-# ЛОГ
-# ===============================
-
-def log_error(path, error):
-    with lock:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"\nFILE: {path}\nERROR: {error}\n")
+SERVER_URL = "http://192.168.1.100:8000/translate"  # IP ПК
+CREATE_BACKUP = False
 
 # ===============================
 # ПРОВЕРКИ
@@ -54,45 +28,36 @@ def contains_english(text):
     return re.search(r"[A-Za-z]", text) is not None
 
 def should_skip_key(key):
-    key = key.lower()
-    return key in ["action", "target", "logname", "id"]
+    return key.lower() in ["action", "target", "logname", "id"]
 
 # ===============================
-# БАТЧ ПЕРЕВОД
+# БАТЧ ПЕРЕВОД ЧЕРЕЗ СЕРВЕР
 # ===============================
 
 def batch_translate(texts):
 
-    results = {}
-    untranslated = []
+    if not texts:
+        return {}
 
-    for t in texts:
-        if t in CACHE:
-            results[t] = CACHE[t]
-        elif not contains_english(t):
-            results[t] = t
-        else:
-            untranslated.append(t)
+    try:
+        response = requests.post(
+            SERVER_URL,
+            json={"texts": texts},
+            timeout=120
+        )
 
-    if untranslated:
-        try:
-            combined = "\n<<<SEP>>>\n".join(untranslated)
-            translated = translator.translate(combined)
-            split = translated.split("\n<<<SEP>>>\n")
+        response.raise_for_status()
 
-            for orig, trans in zip(untranslated, split):
-                CACHE[orig] = trans
-                results[orig] = trans
+        data = response.json()["result"]
 
-        except Exception as e:
-            for t in untranslated:
-                log_error("BATCH", str(e))
-                results[t] = t
+        return dict(zip(texts, data))
 
-    return results
+    except Exception as e:
+        print("Server error:", e)
+        return {t: t for t in texts}
 
 # ===============================
-# EVENTS (перевод speak "")
+# SPEAK ОБРАБОТКА
 # ===============================
 
 def extract_speak(text):
@@ -100,14 +65,19 @@ def extract_speak(text):
     return re.findall(pattern, text)
 
 def replace_speak(text, translations):
+
     def repl(match):
         original = match.group(1)
-        return match.group(0).replace(original, translations.get(original, original))
+        return match.group(0).replace(
+            original,
+            translations.get(original, original)
+        )
+
     pattern = r'speak\s+\w+\s+"([^"]+)"'
     return re.sub(pattern, repl, text)
 
 # ===============================
-# РЕКУРСИВНАЯ ОБРАБОТКА JSON
+# СБОР ТЕКСТОВ
 # ===============================
 
 def collect_texts(obj, collected):
@@ -126,6 +96,10 @@ def collect_texts(obj, collected):
         if contains_english(obj):
             collected.append(obj)
 
+# ===============================
+# ПРИМЕНЕНИЕ ПЕРЕВОДА
+# ===============================
+
 def apply_translations(obj, translations):
 
     if isinstance(obj, dict):
@@ -139,7 +113,6 @@ def apply_translations(obj, translations):
 
     elif isinstance(obj, str):
 
-        # Event?
         if "speak " in obj:
             speaks = extract_speak(obj)
             local = {s: translations.get(s, s) for s in speaks}
@@ -151,15 +124,17 @@ def apply_translations(obj, translations):
     return obj
 
 # ===============================
-# ПОИСК ВСЕХ JSON
+# ПОИСК JSON
 # ===============================
 
 def find_json_files(folder):
     files = []
+
     for root, _, filenames in os.walk(folder):
         for f in filenames:
             if f.lower().endswith(".json") and f.lower() != "manifest.json":
                 files.append(os.path.join(root, f))
+
     return files
 
 # ===============================
@@ -172,7 +147,7 @@ def process_file(filepath):
         with open(filepath, "r", encoding="utf-8") as f:
             data = json5.load(f)
     except Exception as e:
-        log_error(filepath, e)
+        print(f"Ошибка в файле {filepath}: {e}")
         return
 
     texts = []
@@ -194,14 +169,12 @@ def process_file(filepath):
 def main():
 
     files = find_json_files(MODS_FOLDER)
+
     print(f"Найдено JSON файлов: {len(files)}")
 
-    with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        list(tqdm(executor.map(process_file, files),
-                  total=len(files),
-                  desc="Общий прогресс (файлы)"))
+    for file in tqdm(files, desc="Перевод файлов"):
+        process_file(file)
 
-    save_cache()
     print("Перевод завершён.")
 
 if __name__ == "__main__":
